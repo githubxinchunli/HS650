@@ -1,0 +1,237 @@
+---
+title: "hw4"
+author: "Xinchun Li"
+date: "2018年3月9日"
+output: html_document
+---
+
+```{r setup, include=FALSE, message=FALSE, warning=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(rvest)
+
+# Load the data
+site <- "http://wiki.socr.umich.edu/index.php/SOCR_Data_2011_US_JobsRanking#2011_Ranking_of_the_200_most_common_Jobs_in_the_US"
+wiki_url <- read_html(site)
+html_nodes(wiki_url, "wikitable")
+job_data <- html_table(html_nodes(wiki_url,"table")[[1]])
+head(job_data)
+summary(job_data)
+
+# Replace all underscores, _, in the job descriptions by a space 
+job_data$Description <- gsub("_", " ", job_data$Description)
+
+# Split the data 90:10 training:testing (randomly)
+set.seed(12345)
+subset_int <- sample(nrow(job_data),floor(nrow(job_data)*0.9))  # 80% training + 20% testing
+job_data_train<-job_data[subset_int, ]
+summary(job_data_train)
+job_data_test<-job_data[-subset_int, ]
+summary(job_data_test)
+
+# Convert the textual JD meta-data into a corpus object
+# First install package "tm"
+install.packages("tm", repos = "http://cran.us.r-project.org")
+require(tm)
+
+job_data_corpus<-Corpus(VectorSource(job_data$Description))
+print(job_data_corpus)
+inspect(job_data_corpus[1:3])
+
+# Triage some of the irrelevant punctuation and other symbols in the corpus document, change all text to lower case, etc
+corpus_clean<-tm_map(job_data_corpus, tolower)
+corpus_clean<-tm_map(corpus_clean, removePunctuation)
+corpus_clean <- tm_map(corpus_clean, stripWhitespace)
+corpus_clean <-tm_map(corpus_clean, removeNumbers)
+
+inspect(corpus_clean[1:3])
+
+# Tokenize the job descriptions into words
+job_data_dtm<-DocumentTermMatrix(corpus_clean)
+job_data_dtm_train<-job_data_dtm[subset_int,]
+job_data_dtm_test<-job_data_dtm[-subset_int, ]
+corpus_train<-corpus_clean[subset_int]
+corpus_test<-corpus_clean[-subset_int]
+
+# Examine the distributions of Stress_Category and Hiring_Potential
+prop.table(table(job_data$Stress_Category))
+prop.table(table(job_data$Hiring_Potential)) 
+
+# Binarize the Job Stress into two categories (low/high stress levels), separately for training and testing data
+# Here, since Stress_Category is in line with Stress_Level, I use the Stress_Category to do the work and I assume that 0, 1, 2 is low stress, and 3, 4, 5 is high stress
+job_data_train$job_stress<-job_data_train$Stress_Category %in% c(3:5)
+job_data_train$job_stress<-factor(job_data_train$job_stress, levels=c(F, T), labels = c("low stress", "high stress"))
+job_data_test$job_stress<-job_data_test$Stress_Category %in% c(3:5)
+job_data_test$job_stress<-factor(job_data_test$job_stress, levels=c(F, T), labels = c("low_stress", "high stress"))
+prop.table(table(job_data_train$job_stress))
+prop.table(table(job_data_test$job_stress))
+
+# Generate a word cloud to visualize the job descriptions (training data)
+# First install package "wordcloud"
+install.packages("wordcloud", repos = "http://cran.us.r-project.org")
+library(wordcloud)
+
+wordcloud(corpus_train, min.freq = 5, random.order = FALSE)
+
+# Graphically visualize the difference between low and high stress categories
+low<-subset(job_data_train, job_stress=="low stress")
+high<-subset(job_data_train, job_stress=="high stress")
+wordcloud(low$Description, max.words = 50)
+wordcloud(high$Description, max.words = 50)
+
+# Transform the word count features into categorical data
+summary(findFreqTerms(job_data_dtm_train, 5))
+job_data_dict<-as.character(findFreqTerms(job_data_dtm_train, 5))
+job_train<-DocumentTermMatrix(corpus_train, list(dictionary=job_data_dict))
+job_test<-DocumentTermMatrix(corpus_test, list(dictionary=job_data_dict))
+
+convert_counts <- function(wordFreq) {
+  wordFreq <- ifelse(wordFreq > 0, 1, 0)
+  wordFreq <- factor(wordFreq, levels = c(0, 1), labels = c("No", "Yes"))
+  return(wordFreq)
+}
+
+job_train <- apply(job_train, MARGIN = 2, convert_counts)
+job_test <- apply(job_test, MARGIN = 2, convert_counts)
+
+# Check the structure of job_data_train and job_data_train:
+head(job_train); dim(job_train)
+
+# Ignore low frequency words and report the sparsity of your categorical data matrix
+install.packages("e1071", repos = "http://cran.us.r-project.org")
+library(e1071)
+
+job_classifier <- naiveBayes(job_train, job_data_train$job_stress)
+job_test_pred<-predict(job_classifier, job_test)
+print(job_test_pred)
+
+# Apply the Naive Bayes classifier on the high frequency terms.
+library(gmodels)
+CrossTable(job_test_pred, job_data_test$job_stress)
+print("Accuracy = ACC = (TP + TN)/(TP + FP + FN + TN) = (16 + 0)/20 = 0.8")
+print("Error Rates = 1 - Accuracy = 0.2")
+print("Sensitivity = 16/(16 + 1) = 0.94")
+print("Specificity = 0/3 = 0")
+
+job_classifier <- naiveBayes(job_train, job_data_train$job_stress, laplace = 15)
+job_test_pred<-predict(job_classifier, job_test)
+CrossTable(job_test_pred, job_data_test$job_stress)
+
+print("Accuracy = ACC = (TP + TN)/(TP + FP + FN + TN) = (17 + 0)/20 = 0.85")
+print("Error Rates = 1 - Accuracy = 0.15")
+print("Sensitivity = 17/(17 + 0) = 1")
+print("Specificity = 0/3 = 0")
+
+# Fit an LDA prediction model for job stress level and compare to the Naive Bayes classifier (stress-level), report the error rates, specificity and sensitivity (on testing data)
+library(MASS)
+df_job_train = data.frame(lapply(as.data.frame(job_train),as.numeric), job_stress = job_data_train$job_stress)
+df_job_test = data.frame(lapply(as.data.frame(job_test),as.numeric), job_stress = job_data_test$job_stress)
+
+job_lda <- lda(data=df_job_train, job_stress~.)
+
+# job_data_pred = predict(job_data_lda, df_job_data_test[,-104])
+job_pred = predict(job_lda, df_job_test)
+CrossTable(job_pred$class, df_job_test$job_stress)
+
+print("Accuracy = ACC = (TP + TN)/(TP + FP + FN + TN) = (15 + 0)/20 = 0.75")
+print("Error Rates = 1 - Accuracy = 0.25")
+print("Sensitivity = 15/(15 + 2) = 0.88")
+print("Specificity = 0/3 = 0")
+
+print("From this rates we calculate from LDA model and NB model respectively, we can see that the accuracy rate of LDA model on predicted test data of job stress is a bit lower than that of NB model on the same data set. Thus, the error rate of LDA model is a bit higher. Sensitivity rate of LDA model predict result is also a bit lower while the specificity rate remains the same.")
+
+# Use C5.0 and rpart to train a decision tree and compare their job-stress predictions to their Naive Bayes counterparts (report results on testing data).
+# install.packages("rpart")
+library("C50")
+library("caret")
+
+set.seed(1234)
+
+job_stress_model<-C5.0(job_data_train[,-c(1,2,10,11)], job_data_train$job_stress)
+job_stress_model
+
+# plot(job_stress_model, subtree = 17)   
+job_stress_pred <- predict(job_stress_model, job_data_test)
+summary(job_stress_pred)
+
+library(tm)
+library(caret)
+x <- as.integer(job_stress_pred)
+y <- job_data_test$job_stress
+l <- union(x, y)
+Table2 <- table(factor(x, l), factor(y, l))
+confusionMatrix(Table2)
+
+print("Accuracy = ACC = (TP + TN)/(TP + FP + FN + TN) = (17 + 0)/20 = 0.85")
+print("Error Rates = 1 - Accuracy = 0.15")
+print("Sensitivity = 17/(17 + 0) = 1")
+print("Specificity = 0/3 = 0")
+
+print("From this rates we calculate from the decision tree and NB model respectively, we can see that the accuracy rate of decision tree on predicted test data of job stress is a bit higher than that of NB model on the same data set. Thus, the error rate of the decision tree is a bit lower. Sensitivity rate of trained decision tree predict result is also a bit higher while the specificity rate remains the same. To train a decision tree improves the prediction capacity of test data job stress level from NB model")
+
+error_cost<-matrix(c(0, 4, 1, 0), nrow = 2)
+print(error_cost)
+
+set.seed(1234)
+job_cost<-C5.0(job_train, job_data_train$job_stress, costs=error_cost)
+job_cost_pred<-predict(job_cost, job_test)
+
+print("This is the same result as the result above, using a different method")
+
+
+library("rpart") 
+set.seed(1234)
+rp_model<-rpart(job_stress~., data=job_data_train[,-c(1,2,10)], cp=0.01) 
+# here we use rpart::cp = *complexity parameter* = 0.01
+summary(rp_model)
+
+library(rpart.plot)
+rpart.plot(rp_model, type = 4,extra = 1,clip.right.labs = F)
+
+library(rattle)
+fancyRpartPlot(rp_model, cex = 1, caption = "rattle::fancyRpartPlot (job stress Data)")
+
+rp_pred<-predict(rp_model, job_data_test)
+
+
+
+set.seed(1234)
+control = rpart.control(job_stress = 0.000, xxval = 100, minsplit = 2)
+rpart_model= rpart(job_stress ~ ., data = job_data_train, control = control)
+plotcp(rpart_model)
+
+
+# Fit a multivariate linear model to predict Overall job ranking (smaller is better). Generate some informative pairs plots. Use backward step-wise feature selection to simplify the model, report the AIC.
+library(GGally)
+cor(job_data[c("Overall_Score", "Average_Income(USD)", "Work_Environment", "Stress_Level", "Stress_Category", "Physical_Demand", "Hiring_Potential")])
+pairs(job_data[c("Overall_Score", "Average_Income(USD)", "Work_Environment", "Stress_Level", "Stress_Category", "Physical_Demand", "Hiring_Potential")])
+
+# install.packages("psych")
+library(psych)
+pairs.panels(job_data[,c("Overall_Score", "Average_Income(USD)", "Work_Environment", "Stress_Level", "Stress_Category", "Physical_Demand", "Hiring_Potential")])
+fit<-lm(Overall_Score ~., data=job_data[,-c(1,2,10,11)])
+fit
+summary(fit)
+plot(fit, which = 1:2)
+step(fit,direction = "backward")
+print("AIC is 1662.1")
+
+# There are some other directions we can use 
+step(fit,direction = "forward")
+step(fit,direction = "both")
+step(fit,k=2)
+step(fit,k=log(nrow(job_data)))
+fit2 = step(fit,k=2,direction = "backward")
+summary(fit2)
+plot(fit2, which = 1:2)
+
+# Half-normal plot for leverages
+# install.packages("faraway")
+library(faraway)
+halfnorm(lm.influence(fit)$hat, nlab = 2, ylab="Leverages")
+summary(job_data)
+
+```
+
