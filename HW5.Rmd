@@ -1,0 +1,204 @@
+---
+title: "HW5"
+author: "Xinchun Li"
+date: "3/17/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE, message=FALSE, warning=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+##Problem 5.1 (Neural nets)
+
+library("neuralnet")
+memory.limit(50000)
+
+power_NN <- function(lambda) {
+  set.seed(1234)
+  
+  if (isTRUE(all.equal(lambda, as.integer(lambda)))) {
+    rand_data <- runif(1000, -1, 1)
+    N <- 1 # out of range [1: 2] is also included in the testing!
+    test_data <- seq(-N, N, 0.01)
+  } else {
+    rand_data <- abs(runif(1000, 0, 100))
+    test_data <- seq(0, 100, .01)
+  }
+  
+  pwr_df <- data.frame(rand_data, pwr_data=rand_data^lambda) 
+  plot(rand_data, pwr_df$pwr_data)
+  
+  test_data_pwr <- test_data^lambda
+  
+  net.pwr1 <- neuralnet(pwr_data ~ rand_data,  pwr_df, hidden=20, threshold=0.1)
+  net.pwr2 <- neuralnet(pwr_data ~ rand_data,  pwr_df, hidden=c(20,10), threshold=0.1)
+  net.pwr4 <- neuralnet(pwr_data ~ rand_data,  pwr_df, hidden=50, threshold=0.1)
+  
+  pred_pwr1 <- compute(net.pwr1, test_data)$net.result
+  pred_pwr2 <- compute(net.pwr2, test_data)$net.result
+  pred_pwr4 <- compute(net.pwr4, test_data)$net.result
+  
+  df_nn <- as.data.frame(cbind(pred_pwr1,pred_pwr2,pred_pwr4))
+  
+  MSE <- c(cor(pred_pwr1,test_data_pwr),cor(pred_pwr2,test_data_pwr),cor(pred_pwr4,test_data_pwr))
+  
+  best <- df_nn[,which.max(abs(MSE))]
+  
+  plot(best, test_data_pwr, xlim=c(0, 1), ylim=c(0, 1)); abline(0,1, col="red", lty=2)
+  legend("bottomright",  c("Pred vs. Actual Pwr", "Pred=Actual Line"), cex=0.8, lty=c(1,2), lwd=c(2,2),col=c("black","red"))
+  
+  compare_df <-data.frame(best, test_data_pwr);
+  
+  plot(test_data, test_data_pwr)
+  lines(test_data, best, pch=22, col="red", lty=2)
+  legend("bottomright",  c("Actual Pwr","Predicted Pwr"), lty=c(1,2), lwd=c(2,2),col=c("black","red"))
+  
+  return(MSE)
+}
+
+power_half<-power_NN(.5)
+power_2<-power_NN(2)
+power_5 <- power_NN(3)
+
+NN <- rbind(power_half,power_2,power_5)
+row.names(NN)<-c("1/2","2","5")
+colnames(NN)<-c("Hidden=20","Hidden=(20,10)","Hidden=50")
+
+##Problem 5.2 (K-mean):
+
+#####Split data into appropriate predictors and scale values.
+library("rvest")
+ALS_Data <- as.data.frame(read.csv("https://umich.instructure.com/files/1789624/download?download_frd=1", header=T, na.strings=c("", ".", "NA", "NR")))
+
+ALS_df <- ALS_Data[,names(ALS_Data) %in% c("Age_mean", "ALSFRS_slope", "ALSFRS_Total_max", "ALSFRS_Total_median", "ALSFRS_Total_range", "Blood.Urea.Nitrogen..BUN._median", "Blood.Urea.Nitrogen..BUN._min", "Blood.Urea.Nitrogen..BUN._range", "BMI_max", "bp_diastolic_median", "bp_systolic_median", "Calcium_median", "Chloride_median", "Creatinine_median", "Glucose_median", "Hemoglobin_median", "leg_median", "leg_min", "leg_range", "Lymphocytes_median", "mouth_median", "onset_delta_mean", "onset_site_mean", "respiratory_median", "Sodium_median", "trunk_max", "trunk_median")]
+df_z <- as.data.frame(lapply(ALS_df, scale))
+
+#####K-means with rule of thumb clusters
+
+library("cluster")
+
+set.seed(143)
+df_z_clusters<-kmeans(df_z, 33)
+
+dis = dist(df_z)
+sil = silhouette(df_z_clusters$cluster, dis)
+
+
+#####Silhouette plot when k=33
+
+plot(sil,col=1:33,border=NA)
+
+#####Barplot of cluster centers when k=33
+
+barplot(t(df_z_clusters$centers), beside = TRUE, xlab="cluster", ylab="value", col = rainbow(33))
+
+library("matrixStats")
+
+kpp_init = function(dat, K) {
+  x = as.matrix(dat)
+  n = nrow(x)
+  
+  centers = matrix(NA, nrow=K, ncol=ncol(x))
+  set.seed(123)
+  centers[1,] = as.matrix(x[sample(1:n, 1),])
+  for (k in 2:K) {
+    dists = matrix(NA, nrow=n, ncol=k-1)
+    for (j in 1:(k-1)) {
+      temp = sweep(x, 2, centers[j,], '-')
+      dists[,j] = rowSums(temp^2)
+    }
+    dists = rowMins(dists)
+    
+    cumdists = cumsum(dists)
+    prop = runif(1, min=0, max=cumdists[n])
+    centers[k,] = as.matrix(x[min(which(cumdists > prop)),])
+  }
+  return(centers)
+}
+
+
+#####Find optimal k with kmeans++
+
+n_rows <- 20
+mat = matrix(0,nrow = n_rows)
+for (i in 2:n_rows){
+  set.seed(143)
+  clust_kpp = kmeans(df_z, kpp_init(df_z, i), iter.max=100, algorithm='Lloyd')
+  sil = silhouette(clust_kpp$cluster, dis)
+  mat[i] = mean(as.matrix(sil)[,3])
+}
+colnames(mat) <- c("Avg_Silhouette_Value")        
+
+library("ggplot2")
+ggplot(data.frame(k=2:n_rows,sil=mat[2:n_rows]),aes(x=k,y=sil))+ geom_line()+ scale_x_continuous(breaks = 2:n_rows)
+
+#####k=4 is a reasonable choice of clusters
+
+set.seed(143)
+df_z_clusters<-kmeans(df_z, 4)
+dis <- dist(df_z)
+sil3 <- silhouette(df_z_clusters$cluster, dis)
+plot(sil3,col=rainbow(4),border=NA)
+
+
+#####Are cluster centers sufficiently different?
+par(mfrow=c(1, 1), mar=c(4, 4, 4, 2))
+barplot(t(df_z_clusters$centers[,"ALSFRS_slope"]),beside = TRUE, xlab="cluster", ylab="Center ALSFRS Slope", col = rainbow(4))
+
+
+#####Yes, it seems that the clusters represent high and middle negative ALSFRS slopes as well as high and middle positive values. Now examining cluster centers by variables.
+
+barplot(t(df_z_clusters$centers), beside = TRUE, xlab="cluster",ylab="value", col = rainbow(25))
+
+
+#####Hierarchical clustering:
+
+sing = agnes(df_z, diss=FALSE, method='single')
+comp = agnes(df_z, diss=FALSE, method='complete')
+ward = agnes(df_z, diss=FALSE, method='ward')
+sil_sing = silhouette(cutree(sing, k=4), dis)
+sil_comp = silhouette(cutree(comp, k=4), dis)
+sil_ward = silhouette(cutree(ward, k=4), dis)
+
+
+#load("sing.rda")
+#load("comp.rda")
+#load("ward.rda")
+#sil_sing = silhouette(cutree(sing, k=4), dis)
+#sil_comp = silhouette(cutree(comp, k=4), dis)
+#sil_ward = silhouette(cutree(ward, k=4), dis)
+
+#####Single linkage:
+
+plot(sil_sing,col=rainbow(4),border=NA)
+
+#####Complete linkage:
+
+plot(sil_comp,col=rainbow(4),border=NA)
+
+#####Ward method (k=3,4,5):
+
+plot(silhouette(cutree(ward, k=3), dis),col=rainbow(3),border=NA)
+plot(sil_ward,col=rainbow(4),border=NA)
+plot(silhouette(cutree(ward, k=5), dis),col=rainbow(5),border=NA)
+
+#####GMM Cluster:
+library("mclust")
+set.seed(143)
+gmm_clust <- Mclust(df_z)
+gmm_clust$modelName
+
+#load("gmm_clust.rda") #Don't forget to change directories
+#gmm_clust$modelName
+plot(gmm_clust$BIC, legendArgs = list(x = "bottom", ncol = 2, cex = 1))
+gmm_clust$BIC[3,11]
+
+barplot(t(gmm_clust$parameters$mean[c(2,8,21),]),beside = TRUE, xlab="cluster",ylab="Center Values",main="Center Values of Select Variables by Cluster",col=rainbow(3))
+
+####K-means was reasonable at 4 clusters. K-means++ was most effective with the Wald method at k=3. GMM used the EEV method with 3 components.
+
+####Among other variables, Blood.Urea.Nitrogen..BUN._range and onset_site_mean varied widely between clusters.
+
+```
