@@ -1,0 +1,136 @@
+---
+title: "HW6"
+author: "Xinchun Li"
+date: "4/6/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE, message=FALSE, warning=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+HW _______6__________________
+Winter 2018, DSPA (HS650)
+Name: __Xinchun _Li______________
+SID: __85922126_____
+UMich E-mail: ___xincli_____@umich.edu
+I certify that the following paper represents my own independent work and conforms with the guidelines of academic honesty described in the UMich student handbook.
+
+```{r}
+# Q1. Network data visualization
+# load the data
+
+graphdata <- read.table("03_les miserablese_GraphData.txt")
+
+# Visualize the character network as an undirected graph
+#install.packages("igraph")
+library(igraph)
+graphdata.mat <- as.matrix(graphdata, ncol=2)
+graph_m<-graph.edgelist(graphdata.mat, directed = F)
+
+# Summarize the graph and explain the output
+summary(graph_m)
+plot(graph_m)
+# This graph is very complicated. We can still see that some words are surrounded by more nodes than others. To obtain such information we can use degree() function which list the number of edges for each node.
+
+# Find some important nodes (corresponding to key novel characters)
+# Calculate the degree and the centrality of this graph
+degree(graph_m)
+# Skimming the table we can find that the user Valjean has as many as 36 connections, which makes the user a highly-connected hub. Likely, this node may have higher social relevance.
+# Some edges might be more important than other edges because they serve as a bridge to link a cloud of nodes. To compare their importance, we can use the betweenness centrality measurement. Betweenness centrality measures centrality in a network. High centrality for a specific node indicates influence. betweenness() can help us to calculate this measurement.
+
+betweenness(graph_m)
+# Again, the user Valjean has the highest betweenness centrality 1624.4688004.
+# The top five important nodes that have the highest degree and betweenness are:
+# 1. Valjean
+# 2. Gavroche
+# 3. Marius
+# 4. Javert
+# 5. Thenardier 
+
+# Will the results change if we assume the graph is directed?
+graph_m_1<-graph.edgelist(graphdata.mat, directed = T)
+# Summarize the graph and explain the output
+summary(graph_m_1)
+plot(graph_m_1)
+# This graph is very complicated. We can still see that some words are surrounded by more nodes than others. To obtain such information we can use degree() function which list the number of edges for each node.
+
+# Find some important nodes (corresponding to key novel characters)
+# Calculate the degree and the centrality of this graph
+degree(graph_m_1)
+# Skimming the table we can find that the user Valjean has as many as 36 connections, which makes the user a highly-connected hub. Likely, this node may have higher social relevance.
+# Some edges might be more important than other edges because they serve as a bridge to link a cloud of nodes. To compare their importance, we can use the betweenness centrality measurement. Betweenness centrality measures centrality in a network. High centrality for a specific node indicates influence. betweenness() can help us to calculate this measurement.
+
+betweenness(graph_m_1)
+# The uer Fantine has the highest betweenness centrality 377.766667.
+# The output is a bit different if we assume the graph is directed.
+
+# Q2. Feature Selection
+# Load the data
+ClassificationValidationData <- read.csv("06_PPMI_ClassificationValidationData.csv", header = TRUE)
+
+# Set ResearchGroup as class variable
+# Delete irrelevant columns (e.g. X, FID_IID) and select only the PD and Control cohorts, as the ResearchGroup feature includes PD, Control and SWEDD (which are mild cases of PD)
+ClassificationValidationData$ResearchGroup<-ifelse(ClassificationValidationData$ResearchGroup=="PD", 1, ifelse(ClassificationValidationData$ResearchGroup=="Control", 2, 0))
+ClassificationValidationData <- ClassificationValidationData[ , !(names(ClassificationValidationData) %in% c("FID_IID", "X", "VisitID"))] # remove Subject ID/X
+ClassificationValidationData <- subset(ClassificationValidationData, ResearchGroup!=0)
+
+# Boruta model
+# install.packages("Boruta")
+library(Boruta)
+set.seed(123)
+cls<-Boruta(ResearchGroup~., data=ClassificationValidationData, doTrace = 0)
+print(cls)
+plot(cls, xlab="", xaxt="n")
+lz<-lapply(1:ncol(cls$ImpHistory), function(i)
+  cls$ImpHistory[is.finite(cls$ImpHistory[, i]), i])
+names(lz)<-colnames(cls$ImpHistory)
+lb<-sort(sapply(lz, median))
+axis(side=1, las=2, labels=names(lb), at=1:ncol(cls$ImpHistory), cex.axis=0.5, font = 4)
+final.cls<-TentativeRoughFix(cls)
+print(final.cls)
+final.cls$finalDecision
+getConfirmedFormula(final.cls)
+print(final.cls$finalDecision[final.cls$finalDecision %in% c("Confirmed", "Tentative")])
+impBoruta <- final.cls$finalDecision[final.cls$finalDecision %in% c("Confirmed")]
+length(impBoruta)
+
+# RFE
+library(caret)
+library(randomForest)
+set.seed(123)
+control<-rfeControl(functions = rfFuncs, method = "cv", number=10)
+rf.train <- rfe(ClassificationValidationData[, -c(1,2, 65)], ClassificationValidationData[, 65], sizes=c(20, 30, 40), rfeControl=control)
+rf.train
+plot(rf.train, type=c("g", "o"), cex=1, col=1:4)
+
+predRFE <- predictors(rf.train)
+predBoruta <- getSelectedAttributes(final.cls, withTentative = F)
+intersect(predBoruta, predRFE)
+
+# Stepwise 
+data2 <- ClassificationValidationData[,-1]
+# Define a base model - intercept only
+base.mod <- lm(ResearchGroup ~ 1 , data= data2)
+# Define the full model - including all predictors
+all.mod <- lm(ResearchGroup ~ . , data= data2)
+# ols_step <- lm(ALSFRS_slope ~ ., data=data2)
+ols_step <- step(base.mod, scope = list(lower = base.mod, upper = all.mod), direction = 'both', k=2, trace = F)
+summary(ols_step)
+ols_step
+
+# get the shortlisted variable
+stepwiseConfirmedVars <- names(unlist(ols_step[[1]]))
+# remove the intercept 
+stepwiseConfirmedVars <- stepwiseConfirmedVars[!stepwiseConfirmedVars %in% "(Intercept)"]
+print(stepwiseConfirmedVars)
+# install.packages("mlbench")
+library(mlbench)
+library(caret)
+
+# estimate variable importance
+predStepwise <- varImp(ols_step, scale=FALSE)
+# summarize importance
+print(predStepwise)
+intersect(predBoruta, stepwiseConfirmedVars) 
+
+```
