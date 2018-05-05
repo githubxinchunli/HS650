@@ -1,0 +1,67 @@
+---
+title: "HS650_term_paper(2)"
+author: "Xinchun Li"
+date: "4/13/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE, message=FALSE, warning=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(rvest)
+#Load the data from website
+site <- "http://wiki.socr.umich.edu/index.php/SOCR_Data_AD_BiomedBigMetadata"
+wiki_url <- read_html(site)
+html_nodes(wiki_url, "#content")
+ad_data <- html_table(html_nodes(wiki_url,"table")[[1]])
+head(ad_data)
+
+ad_data[ad_data == "."] <- 0
+ad_data$SymptomeChronicity <- as.numeric(ad_data$SymptomeChronicity)
+ad_data$FAQTOTAL <- as.numeric(ad_data$FAQTOTAL)
+ad_data$DX_Confidence <- as.numeric(ad_data$DX_Confidence)
+ad_data$SymptomeSeverety <- as.numeric(ad_data$SymptomeSeverety)
+ad_data$CTWHITE <- as.numeric(ad_data$CTWHITE)
+ad_data$CTRED <- as.numeric(ad_data$CTRED)
+ad_data$PROTEIN <- as.numeric(ad_data$PROTEIN)
+ad_data$GLUCOSE <- as.numeric(ad_data$GLUCOSE)
+ad_data$DX_Conversion <- as.numeric(ad_data$DX_Conversion)
+ad_data$adascog <- as.numeric(ad_data$adascog)
+ad_data$FAQTOTAL <- as.numeric(ad_data$FAQTOTAL)
+
+ad_data <- ad_data[,-1]
+
+pca.model <- princomp(ad_data)
+summary(pca.model) # pc loadings (i.e., eigenvector columns)
+plot(pca.model)
+biplot(pca.model)
+# fviz_pca_biplot(pca.model, axes = c(1, 2), geom = "point",col.ind = "black", col.var = "steelblue", label = "all", invisible = "none", repel = F, habillage = ad_data$Gender,palette = NULL, addEllipses = TRUE, title = "PCA - Biplot")
+# cor(ad_data)
+# ev <- eigen(cor(ad_data)) # get eigenvalues
+# ap <- parallel(subject=nrow(ad_data), var=ncol(ad_data), rep=100, cent=.05)
+# nS <- nScree(x=ev$values, aparallel=ap$eigen$qevpea)
+# summary(nS)
+
+# install.packages("Rtsne")
+library(Rtsne)
+
+# If working with post-processed AD data above: remove duplicates (after stripping time)
+ad_data <- unique(ad_data[,])
+
+# Run the t-SNE, tracking the execution time (artificially reducing the sample-size to get reasonable calculation time)
+execTime_tSNE <- system.time(tsne_digits <- Rtsne(ad_data, dims = 2, perplexity=30, verbose=TRUE, max_iter = 1000))
+execTime_tSNE
+table(ad_data$DXCURREN)
+
+CharToColor = function(input_char){ 
+  mapping = c("1"="blue", "2"="red", "3"="yellow")
+  mapping[input_char]
+}
+ad_data$DXCURREN.col = sapply(ad_data$DXCURREN, CharToColor)
+
+plot(tsne_digits$Y, main="t-SNE Clusters", col=ad_data$DXCURREN.col, pch = 15)
+legend("topright", c("NL", "MCI", "AD"), fill=unique(ad_data$DXCURREN.col), bg='gray90', cex=0.5)
+
+```

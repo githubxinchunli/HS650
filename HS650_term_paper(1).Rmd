@@ -1,0 +1,154 @@
+---
+title: "HS650_term_paper(1)"
+author: "Xinchun Li"
+date: "4/13/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE, message=FALSE, warning=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(rvest)
+#Load the data from website
+site <- "http://wiki.socr.umich.edu/index.php/SOCR_Data_AD_BiomedBigMetadata"
+wiki_url <- read_html(site)
+html_nodes(wiki_url, "#content")
+ad_data <- html_table(html_nodes(wiki_url,"table")[[1]])
+head(ad_data)
+
+# 10.2 Step 2: Exploring and preparing the data
+# To make sure that the data is ready for further modeling, we first should delete the subject ID variable as it is not needed in the dimension reduction procedures.
+ad_data <- ad_data[ ,-1]
+
+ad_data[ad_data == "."] <- 0
+ad_data$SymptomeChronicity <- as.numeric(ad_data$SymptomeChronicity)
+ad_data$FAQTOTAL <- as.numeric(ad_data$FAQTOTAL)
+ad_data$DX_Confidence <- as.numeric(ad_data$DX_Confidence)
+ad_data$SymptomeSeverety <- as.numeric(ad_data$SymptomeSeverety)
+ad_data$CTWHITE <- as.numeric(ad_data$CTWHITE)
+ad_data$CTRED <- as.numeric(ad_data$CTRED)
+ad_data$PROTEIN <- as.numeric(ad_data$PROTEIN)
+ad_data$GLUCOSE <- as.numeric(ad_data$GLUCOSE)
+ad_data$DX_Conversion <- as.numeric(ad_data$DX_Conversion)
+ad_data$adascog <- as.numeric(ad_data$adascog)
+ad_data$FAQTOTAL <- as.numeric(ad_data$FAQTOTAL)
+
+summary(ad_data)
+mu<-apply(ad_data, 2, mean)
+mean(mu)
+ad.center<-as.matrix(ad_data)-mean(mu)
+S<-cov(ad.center)
+eigen(S)
+
+pcal <- prcomp(as.matrix(ad_data), center = T)
+
+summary(pcal) 
+pcal$rotation
+
+# install.packages("factoextra")
+library(factoextra)
+eigen<-get_eigenvalue(pcal)
+eigen
+plot(pcal)
+library(graphics)
+biplot(pcal, choices = 1:2, scale = 1, pc.biplot = F)
+qualit_vars <- as.factor(ad_data$SymptomeChronicity)
+head(qualit_vars)
+
+# for plots of individuals
+fviz_pca_ind(pcal, habillage = qualit_vars, addEllipses = TRUE, ellipse.level = 0.68) + theme_minimal()
+# for Biplot of individuals and variables 
+fviz_pca_biplot(pcal, axes = c(1, 2), geom = c("point", "text"),
+                col.ind = "black", col.var = "steelblue", label = "all",
+                invisible = "none", repel = T, habillage = qualit_vars, 
+                palette = NULL, addEllipses = TRUE, title = "PCA - Biplot")
+
+library(scatterplot3d)
+
+#Fit linear model
+lm.fit <- lm(BCABDOMN ~  DXCURREN + CDGLOBAL, data = ad_data)
+
+#plot results
+myPlot <- scatterplot3d(ad_data$BCABDOMN, ad_data$DXCURREN, ad_data$CDGLOBAL)
+
+# Get the ranges of the variable.names
+summary(ad_data$DXCURREN)
+summary(ad_data$BCABDOMN)
+summary(ad_data$CDGLOBAL)
+
+# Plot the linear model (line in 3D)
+myCoef <- lm.fit$coefficients
+plotX <- seq(0.93, 1.4,length.out = 100)
+plotY <- seq(0,6,length.out = 100)
+plotZ <- myCoef[1] + myCoef[2]*plotX + myCoef[3]*plotY # linear model
+#Add the linear model to the 3D scatterplot
+myPlot$points3d(plotX,plotY,plotZ, type = "l", lwd=2, col = "red")
+
+myPlot <- scatterplot3d(ad_data$BCABDOMN, ad_data$DXCURREN, ad_data$CDGLOBAL)
+
+# Static Plot
+myPlot$plane3d(lm.fit, lty.box = "solid")
+
+pca1 <- prcomp(as.matrix(cbind(ad_data$BCABDOMN, ad_data$DXCURREN, ad_data$CDGLOBAL)), center = T)
+summary(pca1)
+
+normVec = c(pca1$rotation[,1][2]*pca1$rotation[,2][3]-
+              pca1$rotation[,1][3]*pca1$rotation[,2][2],
+            pca1$rotation[,1][3]*pca1$rotation[,2][1]-
+              pca1$rotation[,1][1]*pca1$rotation[,2][3],
+            pca1$rotation[,1][1]*pca1$rotation[,2][2]-
+              pca1$rotation[,1][2]*pca1$rotation[,2][1]
+)
+
+# install.packages("rgl")
+# Interactive RGL 3D plot with PCA Plane
+library(rgl) 
+
+# Compute the 3D point representing the gravitational balance
+dMean <- apply(cbind(ad_data$BCABDOMN, ad_data$DXCURREN, ad_data$CDGLOBAL), 2, mean)
+# then the offset plane parameter is (d):
+d <- as.numeric((-1)*normVec %*% dMean)  # force the plane to go through the mean
+
+# Plot the PCA Plane
+plot3d(ad_data$BCABDOMN, ad_data$DXCURREN, ad_data$CDGLOBAL, type = "s", col = "red", size = 1)
+planes3d(normVec[1], normVec[2], normVec[3], d, alpha = 0.5)
+
+# Define the 3D features
+x <- ad_data$BCABDOM
+y <- ad_data$DXCURREN
+z <- ad_data$CDGLOBAL
+myDF <- data.frame(x, y, z)
+
+### Fit a (bivariate-predictor) linear regression model
+lm.fit <- lm(z ~ x+y)
+coef.lm.fit <- coef(lm.fit)
+
+### Reparameterize the 2D (x,y) grid, and define the corresponding model values z on the grid
+x.seq <- seq(min(x),max(x),length.out=100)
+y.seq <- seq(min(y),max(y),length.out=100)
+z.seq <- function(x,y) coef.lm.fit[1]+coef.lm.fit[2]*x+coef.lm.fit[3]*y
+# define the values of z = z(x.seq, y.seq), as a Matrix of dimension c(dim(x.seq), dim(y.seq))
+z <- t(outer(x.seq, y.seq, z.seq))
+
+# First draw the 2D plane embedded in 3D, and then add points with "add_trace"
+# install.packages('plotly')
+library(plotly)
+myPlotly <- plot_ly(x=~x.seq, y=~y.seq, z=~z,
+                    colors = c("blue", "red"),type="surface", opacity=0.7) %>%
+  
+  add_trace(data=myDF, x=x, y=y, z=ad_data$CDGLOBAL, mode="markers", 
+            type="scatter3d", marker = list(color="green", opacity=0.9, 
+                                            symbol=105)) %>%
+  
+  layout(scene = list(
+    aspectmode = "manual", aspectratio = list(x=1, y=1, z=1),
+    xaxis = list(title = "BCABDOM"),
+    yaxis = list(title = "DXCURREN"),
+    zaxis = list(title = "CDGLOBAL"))
+  )
+# print(myPlotly)
+myPlotly
+
+```

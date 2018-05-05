@@ -1,0 +1,88 @@
+---
+title: "HS650_term_paper(4)"
+author: "Xinchun Li"
+date: "4/18/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE, message=FALSE, warning=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(rvest)
+#Load the data from website
+site <- "http://wiki.socr.umich.edu/index.php/SOCR_Data_AD_BiomedBigMetadata"
+wiki_url <- read_html(site)
+html_nodes(wiki_url, "#content")
+ad_data <- html_table(html_nodes(wiki_url,"table")[[1]])
+head(ad_data)
+
+ad_data[ad_data == "."] <- 0
+ad_data$SymptomeChronicity <- as.numeric(ad_data$SymptomeChronicity)
+ad_data$FAQTOTAL <- as.numeric(ad_data$FAQTOTAL)
+ad_data$DX_Confidence <- as.numeric(ad_data$DX_Confidence)
+ad_data$SymptomeSeverety <- as.numeric(ad_data$SymptomeSeverety)
+ad_data$CTWHITE <- as.numeric(ad_data$CTWHITE)
+ad_data$CTRED <- as.numeric(ad_data$CTRED)
+ad_data$PROTEIN <- as.numeric(ad_data$PROTEIN)
+ad_data$GLUCOSE <- as.numeric(ad_data$GLUCOSE)
+ad_data$DX_Conversion <- as.numeric(ad_data$DX_Conversion)
+ad_data$adascog <- as.numeric(ad_data$adascog)
+ad_data$FAQTOTAL <- as.numeric(ad_data$FAQTOTAL)
+
+ad_data <- ad_data[,-1]
+
+lm1 <- lm(Weight_Kg~SymptomeSeverety, data = ad_data)
+lm2 <- lm(Gender~SymptomeSeverety, data = ad_data)
+
+cor(ad_data[c("adascog", "DXCURREN", "Weight_Kg","GLUCOSE", "CDHOME")])
+car::vif(lm(DXCURREN ~ adascog + Weight_Kg + GLUCOSE + CDHOME, data=ad_data))
+pairs(ad_data[c("adascog", "DXCURREN", "Weight_Kg","GLUCOSE", "CDHOME")])
+
+library(psych)
+pairs.panels(ad_data[, c("adascog", "DXCURREN", "Weight_Kg","GLUCOSE", "CDHOME")])
+
+fit <- lm(SymptomeSeverety ~., data = ad_data)
+fit
+summary(fit)
+plot(fit, which = 1:2)
+step(fit,direction = "backward")
+step(fit,direction = "forward")
+step(fit,direction = "both")
+step(fit,k=2)
+step(fit,k=log(nrow(ad_data)))
+fit2 = step(fit,k=2,direction = "backward")
+summary(fit2)
+plot(fit2, which = 1:2)
+# Half-normal plot for leverages
+# install.packages("faraway")
+library(faraway)
+halfnorm(lm.influence(fit)$hat, nlab = 2, ylab="Leverages")
+
+# Train Data
+set.seed(1234)
+train_index <- sample(seq_len(nrow(ad_data)), size = 0.75*nrow(ad_data))
+ad_train<-ad_data[train_index, ]
+ad_test<-ad_data[-train_index, ]
+#install.packages("rpart")
+library(rpart)
+ad.rpart<-rpart(DXCURREN ~ adascog + Weight_Kg + GLUCOSE + CDHOME, data=ad_train)
+ad.rpart
+
+# install.packages("rpart.plot")
+library(rpart.plot)
+rpart.plot(ad.rpart, digits=3)
+rpart.plot(ad.rpart, digits = 4, fallen.leaves = T, type=3, extra=101)
+# library(rattle)
+# fancyRpartPlot(ad.rpart, cex = 0.8)
+# ad.p<-predict(ad.rpart, ad_test)
+# summary(ad.p)
+# summary(ad_test$DXCURRE)
+# cor(ad.p, ad_test$DXCURRE)
+# MAE<-function(obs, pred){
+  # mean(abs(obs-pred))
+# 44}
+# MAE(ad_test$DXCURRE, ad.p)
+# mean(ad_test$DXCURRE)
+# MAE(ad_test$DXCURRE, mean(ad_test$DXCURRE))xx

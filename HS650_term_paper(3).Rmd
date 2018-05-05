@@ -1,0 +1,144 @@
+---
+title: "HS650_term_paper(3)"
+author: "Xinchun Li"
+date: "4/13/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE, message=FALSE, warning=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(rvest)
+#Load the data from website
+site <- "http://wiki.socr.umich.edu/index.php/SOCR_Data_AD_BiomedBigMetadata"
+wiki_url <- read_html(site)
+html_nodes(wiki_url, "#content")
+ad_data <- html_table(html_nodes(wiki_url,"table")[[1]])
+head(ad_data)
+
+ad_data[ad_data == "."] <- 0
+ad_data$SymptomeSeverety <- as.numeric(ad_data$SymptomeSeverety)
+
+# choose a few variables for us to study the relationship with SymptomeSeverety  
+ad_data_sub <- ad_data[c(11, 12, 13, 14, 15, 21)]
+summary(ad_data_sub)
+
+di_z<- as.data.frame(lapply(ad_data_sub, scale))
+str(di_z)
+
+library(stats)
+set.seed(321)
+diz_clussters<-kmeans(di_z, 10)
+diz_clussters$size
+
+require(cluster)
+dis = dist(di_z)
+sil = silhouette(diz_clussters$cluster, dis)
+summary(sil)
+plot(sil)
+
+diz_clussters$centers
+head(ad_data_sub)
+par(mfrow=c(1, 1), mar=c(4, 4, 4, 2))
+myColors <- c("darkblue", "red", "green", "brown", "pink", "purple")
+barplot(t(diz_clussters$centers), beside = TRUE, xlab="cluster", 
+        ylab="value", col = myColors)
+legend("top", ncol=2, legend = c("Gender", "Married", "Education", "Age", "Weight_Kg", "SymptomeSeverety"), fill = myColors)
+
+ad_data_sub$clusters<-diz_clussters$cluster
+ad_data_sub[1:5, ]
+
+require(ggplot2)
+ggplot(ad_data_sub, aes(Weight_Kg, SymptomeSeverety), main="Weight vs SymptomeSeverety") +
+  geom_point(aes(colour = factor(clusters), shape=factor(clusters), stroke = 8), alpha=1) + 
+  theme_bw(base_size=25) +
+  geom_text(aes(label=ifelse(clusters%in%1, as.character(clusters), ''), hjust=2, vjust=2, colour = factor(clusters)))+
+  geom_text(aes(label=ifelse(clusters%in%2, as.character(clusters), ''), hjust=-2, vjust=2, colour = factor(clusters)))+
+  geom_text(aes(label=ifelse(clusters%in%3, as.character(clusters), ''), hjust=2, vjust=-1, colour = factor(clusters))) + 
+  guides(colour = guide_legend(override.aes = list(size=8))) +
+  theme(legend.position="top")
+
+# install.packages("matrixStats")
+library(matrixStats)
+kpp_init = function(dat, K) {
+  x = as.matrix(dat)
+  n = nrow(x)
+  # Randomly choose a first center
+  centers = matrix(NA, nrow=K, ncol=ncol(x))
+  set.seed(123)
+  centers[1,] = as.matrix(x[sample(1:n, 1),])
+  for (k in 2:K) {
+    # Calculate dist^2 to closest center for each point
+    dists = matrix(NA, nrow=n, ncol=k-1)
+    for (j in 1:(k-1)) {
+      temp = sweep(x, 2, centers[j,], '-')
+      dists[,j] = rowSums(temp^2)
+    }
+    dists = rowMins(dists)
+    # Draw next center with probability proportional to dist^2
+    cumdists = cumsum(dists)
+    prop = runif(1, min=0, max=cumdists[n])
+    centers[k,] = as.matrix(x[min(which(cumdists > prop)),])
+  }
+  return(centers)
+}
+
+clust_kpp = kmeans(di_z, kpp_init(di_z, 3), iter.max=100, algorithm='Lloyd')
+clust_kpp$centers
+sil2 = silhouette(clust_kpp$cluster, dis)
+summary(sil2)
+plot(sil2, col=1:length(diz_clussters$size), border=NA)
+
+mat = matrix(0,nrow = 11)
+for (i in 2:11){
+  set.seed(321)
+  clust_kpp = kmeans(di_z, kpp_init(di_z, i), iter.max=100, algorithm='Lloyd')
+  sil = silhouette(clust_kpp$cluster, dis)
+  mat[i] = mean(as.matrix(sil)[,3])
+}
+mat
+ggplot(data.frame(k=2:11,sil=mat[2:11]),aes(x=k,y=sil))+geom_line()+scale_x_continuous(breaks = 2:11)
+
+library(cluster)
+pitch_sing = agnes(di_z, diss=FALSE, method='single')
+pitch_comp = agnes(di_z, diss=FALSE, method='complete')
+pitch_ward = agnes(di_z, diss=FALSE, method='ward')
+sil_sing = silhouette(cutree(pitch_sing, k=3), dis)
+sil_comp = silhouette(cutree(pitch_comp, k=3), dis)
+# try 10 clusters, see plot above
+sil_ward = silhouette(cutree(pitch_ward, k=10), dis)
+
+# install.packages("ggdendro")
+library(ggdendro)
+ggdendrogram(as.dendrogram(pitch_ward), leaf_labels=FALSE, labels=FALSE)
+mean(sil_ward[,"sil_width"])
+ggdendrogram(as.dendrogram(pitch_ward), leaf_labels=TRUE, labels=T, size=10)
+summary(sil_ward)
+plot(sil_ward)
+
+library(mclust)
+set.seed(1234)
+gmm_clust <- Mclust(di_z)
+summary(gmm_clust, parameters = TRUE)
+gmm_clust$modelName
+plot(gmm_clust$BIC, legendArgs = list(x = "bottom", ncol = 2, cex = 1))
+plot(gmm_clust, what = "density")
+plot(gmm_clust, what = "classification")
+plot(gmm_clust, what = "uncertainty", dimens = c(5,6), main = "Weight vs. SymptomSeverety")
+
+# Mclust Dimention Reduction clustering
+gmm_clustDR <- MclustDR(gmm_clust, lambda=1)
+summary(gmm_clustDR)
+plot(gmm_clustDR, what = "boundaries", ngrid = 200)
+plot(gmm_clustDR, what = "pairs")
+plot(gmm_clustDR, what = "scatterplot")
+
+# Plot the Silhouette plot to assess the quality of
+# the clustering based on the Mixture of 3 Gaussians
+silGauss = silhouette(as.numeric(gmm_clustDR$class), dis)
+plot(silGauss, col=1:length(gmm_clustDR$class2mixcomp), border=NA)
+table(ad_data_sub$Gender, gmm_clust$classification)
+
+```
